@@ -1,0 +1,101 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dbstoolbox"
+version = "1.0.0"
+description = "The DBS Toolbox - A modern python GUI for deep brain stimulation tools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Mikkel V. Petersen", email = "mikkel.v.petersen@gmail.com"},
+]
+keywords = [
+    "deep-brain-stimulation",
+    "dbs",
+    "neurosurgery",
+    "medical-imaging",
+    "gui",
+    "nicegui",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Healthcare Industry",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "nicegui>=2.0.0",
+    "numpy>=1.21.0",
+    "nibabel>=3.2.0",
+    "plotly>=5.0.0",
+    "pillow>=9.0.0",
+    "scikit-image>=0.19.0",
+    "scipy>=1.7.0",
+    "antspyx>=0.6.1",
+    "pywebview>=6.1",
+    "pyyaml>=6.0.3",
+    # Legacy GUI launchers
+    "pypacer[viz,gui] @ git+https://github.com/mvpetersen/pypacer.git",
+    "leksell-frame-registration @ git+https://github.com/mvpetersen/leksell-frame-registration.git",
+]
+
+[project.optional-dependencies]
+# Development tools
+dev = [
+    "pytest>=6.2.0",
+    "pytest-cov>=2.12.0",
+    "black>=21.6b0",
+    "ruff>=0.1.0",
+    "mypy>=0.910",
+]
+
+# Native GUI support
+native = [
+    "PyQt5>=5.15.0",
+    "PyQtWebEngine>=5.15.0",
+    "qtpy>=2.0.0",
+]
+
+[project.scripts]
+dbstoolbox = "dbstoolbox.main:main"
+
+[project.urls]
+Homepage = "https://github.com/mvpetersen/dbstoolbox"
+Repository = "https://github.com/mvpetersen/dbstoolbox"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dbstoolbox"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/dbstoolbox",
+    "/tests",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+select = ["E", "W", "F", "I", "C", "B", "UP"]
+ignore = ["E501", "B008", "C901"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

@@ -1,0 +1,3 @@
+patient_id,hemisphere,x,y,z,ring,arc,clinical_depth,clinical_track,research_depth,research_track,research_site,surgeons,researchers,anatomical_target,notes
+AUH_0001,left,116.5,89.0,107.0,69.0,115.0,-2,central,-4,central,2,"INI,TIA,LS","INI,TIA,LS",VIM,everything went well
+AUH_0001,right,85.2,88.5,106.8,70.5,65.0,-3,anterior,-5,anterior,2,"INI,TIA,LS","INI,TIA,LS",VIM,good outcome
