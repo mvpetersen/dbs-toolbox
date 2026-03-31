@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sys
 
+from dbstoolbox import __version__
 from dbstoolbox.pages.home import home_page
 from dbstoolbox.pages.transform_simple import SimpleTransformPage
 from dbstoolbox.pages.utils import VisualizePage
@@ -131,11 +132,44 @@ def index():
     transform_page = SimpleTransformPage()
     visualize_page = VisualizePage()
 
+    # Disclaimer dialog
+    with ui.dialog() as disclaimer_dialog, ui.card().classes('q-pa-lg'):
+        ui.label('Research Use Only — Not for Clinical Use').classes('text-h6 text-weight-bold')
+        ui.separator()
+        ui.label(
+            'DBS Toolbox is an investigational research tool provided for scientific and '
+            'educational purposes only. It has not been cleared or approved by any regulatory '
+            'authority for clinical or diagnostic use.'
+        ).classes('q-mt-sm')
+        ui.label(
+            'This software must not be used to guide clinical decision-making, surgical '
+            'planning, or patient care. Outputs have not been validated for clinical accuracy '
+            'and should not be relied upon in any medical context.'
+        ).classes('q-mt-sm')
+        ui.label(
+            'By using this software, you acknowledge and accept these terms.'
+        ).classes('q-mt-sm text-italic')
+        ui.button('Close', on_click=disclaimer_dialog.close).classes('q-mt-md self-end')
+
     # Create header
     with ui.header().classes('items-center justify-between'):
         with ui.row().classes('items-center gap-2'):
             ui.icon('hub', size='lg')
             ui.label('The DBS Toolbox').classes('text-h6 q-ml-sm')
+            ui.label(f'v{__version__}').classes('text-caption text-grey-5')
+
+            # Disclaimer badge (matches HTML report styling)
+            with ui.element('div').classes('cursor-pointer q-ml-lg').style(
+                'padding: 8px 16px; background: #fff8e1; border: 1px solid #ffe082; '
+                'border-radius: 6px; line-height: 1.3; text-align: center;'
+            ).on('click', disclaimer_dialog.open):
+                ui.html(
+                    '<span style="color: #e65100; font-weight: 700; font-size: 16px;">'
+                    '&#9888; Research Use Only</span><br>'
+                    '<span style="color: #b57a00; font-size: 13px;">'
+                    'Not cleared for clinical or diagnostic use</span>',
+                    sanitize=False,
+                )
 
         # Center section for active tool indicator
         active_tool_label = ui.label('').classes('text-h6')
@@ -173,6 +207,21 @@ def index():
 initialize_app()
 
 
+def find_available_port(start_port: int = 8090, max_attempts: int = 10) -> int:
+    """Find an available port starting from start_port."""
+    import socket
+
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('', port))
+                return port
+        except OSError:
+            continue
+
+    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
+
+
 def main():
     """Main application entry point - only used when NOT in reload mode."""
     import os
@@ -180,6 +229,10 @@ def main():
     # Check command-line flags and environment variables
     # Native mode: dbstoolbox --native  OR  NICEGUI_NATIVE=true dbstoolbox
     native_mode = '--native' in sys.argv or os.environ.get('NICEGUI_NATIVE', '').lower() == 'true'
+
+    # Port configuration: Check env var first, then find available port
+    default_port = int(os.environ.get('DBSTOOLBOX_PORT', '8090'))
+    port = find_available_port(default_port)
 
     # Print mode info
     print("🔧 Starting DBS Toolbox")
@@ -192,7 +245,7 @@ def main():
     # Configure native window settings if in native mode
     run_kwargs = {
         'title': 'DBS Toolbox',
-        'port': 8090,
+        'port': port,
         'reload': False,  # Reload is handled separately
         'dark': None,  # Auto dark mode
         'show': True,  # Auto-open browser

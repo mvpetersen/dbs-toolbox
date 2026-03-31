@@ -81,16 +81,18 @@ class Plotly3DViewer:
         trajectory: np.ndarray,
         contacts: np.ndarray,
         color: str = 'blue',
-        name: str = None
+        name: str = None,
+        orientation: dict = None
     ):
         """Add electrode visualization.
-        
+
         Args:
             electrode_id: Unique ID for the electrode
             trajectory: Nx3 array of trajectory points
             contacts: Mx3 array of contact positions
             color: Color for the electrode
             name: Display name
+            orientation: Orientation data dict with marker positions and direction vectors
         """
         # Electrode trajectory line
         trajectory_trace = go.Scatter3d(
@@ -102,11 +104,11 @@ class Plotly3DViewer:
             name=name or f'Electrode {electrode_id}',
             showlegend=True
         )
-        
+
         # Add trajectory trace
         self.traces[f'{electrode_id}_trajectory'] = trajectory_trace
         self.figure.add_trace(trajectory_trace)
-        
+
         # Contact points (only if contacts array is not empty and 2D)
         if contacts.size > 0 and len(contacts.shape) == 2 and contacts.shape[1] >= 3:
             contacts_trace = go.Scatter3d(
@@ -125,7 +127,79 @@ class Plotly3DViewer:
             )
             self.traces[f'{electrode_id}_contacts'] = contacts_trace
             self.figure.add_trace(contacts_trace)
-        
+
+        # Orientation marker vectors (directional DBS electrodes)
+        if orientation and orientation.get('has_markers') and 'markers' in orientation:
+            marker_colors = {'A': '#FFA500', 'B': '#1E90FF', 'C': '#32CD32'}
+            vector_length_mm = 5.0
+            display_name = name or electrode_id
+
+            # Build markers to render (A, B from data + computed C)
+            markers_to_render = {}
+            for mk, md in orientation['markers'].items():
+                p = md.get('position_xyz')
+                d = md.get('direction_vector')
+                if p is not None and d is not None:
+                    markers_to_render[mk] = (np.array(p), np.array(d))
+
+            # Compute virtual C marker: position midpoint, direction = -(A+B) normalized
+            if 'A' in markers_to_render and 'B' in markers_to_render:
+                pos_a, dir_a = markers_to_render['A']
+                pos_b, dir_b = markers_to_render['B']
+                pos_c = (pos_a + pos_b) / 2.0
+                dir_c = -(dir_a + dir_b)
+                norm_c = np.linalg.norm(dir_c)
+                if norm_c > 1e-10:
+                    dir_c = dir_c / norm_c
+                markers_to_render['C'] = (pos_c, dir_c)
+
+            for marker_key, (pos, direction) in markers_to_render.items():
+                end = pos + direction * vector_length_mm
+                m_color = marker_colors.get(marker_key, color)
+
+                # Marker vector line
+                vec_trace = go.Scatter3d(
+                    x=[pos[0], end[0]],
+                    y=[pos[1], end[1]],
+                    z=[pos[2], end[2]],
+                    mode='lines',
+                    line=dict(color=m_color, width=3),
+                    name=f'{display_name} Marker {marker_key}',
+                    showlegend=False
+                )
+                self.traces[f'{electrode_id}_marker_{marker_key}_vec'] = vec_trace
+                self.figure.add_trace(vec_trace)
+
+                # Arrowhead cone at the end of the vector
+                cone_trace = go.Cone(
+                    x=[end[0]], y=[end[1]], z=[end[2]],
+                    u=[direction[0]], v=[direction[1]], w=[direction[2]],
+                    sizemode='absolute',
+                    sizeref=1.0,
+                    showscale=False,
+                    colorscale=[[0, m_color], [1, m_color]],
+                    name=f'{display_name} Marker {marker_key}',
+                    showlegend=False,
+                    hoverinfo='skip'
+                )
+                self.traces[f'{electrode_id}_marker_{marker_key}_cone'] = cone_trace
+                self.figure.add_trace(cone_trace)
+
+                # Floating label at the arrow tip
+                label_trace = go.Scatter3d(
+                    x=[end[0]],
+                    y=[end[1]],
+                    z=[end[2]],
+                    mode='text',
+                    text=[marker_key],
+                    textposition='top center',
+                    textfont=dict(size=12, color=m_color),
+                    name=f'{display_name} Marker {marker_key}',
+                    showlegend=False
+                )
+                self.traces[f'{electrode_id}_marker_{marker_key}_label'] = label_trace
+                self.figure.add_trace(label_trace)
+
         # Update plot and adjust ranges based on data
         if self.plot_element:
             self._update_ranges_for_data()

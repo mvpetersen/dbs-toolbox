@@ -1,4 +1,4 @@
-"""Utils page with visualization tools."""
+"""Utils page with transform and visualize tools."""
 
 from typing import Tuple
 from nicegui import ui, events, app
@@ -10,6 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 import uuid
 
+from dbstoolbox.pages.transform_simple import SimpleTransformPage
 from dbstoolbox.utils.notifications import notify_info, notify_error, notify_success
 from dbstoolbox.utils.validate_electrode_json import validate_electrode_reconstruction
 from dbstoolbox.utils.validate_surgical_csv import validate_surgical_csv
@@ -18,6 +19,20 @@ from dbstoolbox.utils.validate_nifti import validate_nifti, load_nifti_for_visua
 from dbstoolbox.utils.temp_file_manager import get_session_dir, save_uploaded_file, cleanup_session
 from skimage.measure import marching_cubes
 from scipy.ndimage import gaussian_filter
+
+
+TRACE_COLORS = [
+    '#636efa',  # Blue
+    '#EF553B',  # Red
+    '#00cc96',  # Green
+    '#ab63fa',  # Purple
+    '#FFA15A',  # Orange
+    '#19d3f3',  # Cyan
+    '#FF6692',  # Pink
+    '#B6E880',  # Light green
+    '#FF97FF',  # Light purple
+    '#FECB52',  # Yellow
+]
 
 
 class VisualizePage:
@@ -138,7 +153,13 @@ class VisualizePage:
                                 ui.label('NIfTI: 3D/4D probability maps').classes('text-caption text-grey-7')
                             with ui.row().classes('items-start gap-2'):
                                 ui.icon('label', size='xs').classes('text-grey-6')
-                                ui.label('TXT: Volume labels for NIfTI').classes('text-caption text-grey-7')
+                                ui.label('TXT: Volume labels or batch file').classes('text-caption text-grey-7')
+                            ui.separator().classes('my-2')
+                            with ui.row().classes('items-start gap-2'):
+                                ui.icon('inventory_2', size='xs').classes('text-primary')
+                                with ui.column().classes('gap-0'):
+                                    ui.label('Batch Loading').classes('text-caption font-medium text-grey-7')
+                                    ui.label('Upload a TXT file with one file path per line').classes('text-caption text-grey-8').style('font-size: 0.65rem;')
 
                     ui.separator().classes('my-3')
 
@@ -156,96 +177,95 @@ class VisualizePage:
                             ui.label('3D View').classes('text-subtitle2')
                             with ui.row().classes('gap-1'):
                                 ui.button(
-                                    'Export',
                                     icon='download',
                                     on_click=self._download_3d_html
-                                ).props('flat dense size=sm').tooltip('Download 3D view as HTML')
+                                ).props('flat dense round size=sm').tooltip('Download 3D view as HTML')
                                 self.maximize_btn = ui.button(
                                     icon='fullscreen',
                                     on_click=self._toggle_plot_maximize
                                 ).props('flat dense round size=sm')
                                 self.maximize_btn.tooltip('Maximize plot')
 
-                    # Plot container with relative positioning for overlay
-                    with ui.column().classes('w-full h-full relative'):
-                        self.plot_container = ui.column().classes('w-full h-full')
-                        self._update_plot()
+                        # Plot container with relative positioning for overlay
+                        with ui.column().classes('w-full h-full relative'):
+                            self.plot_container = ui.column().classes('w-full h-full')
+                            self._update_plot()
 
-                        # Virtual trajectory controls as overlay (initially hidden)
-                        self.virtual_trajectory_container = ui.row().classes('absolute bottom-0 left-0 right-0 items-center gap-3 p-2').style('background: transparent; pointer-events: auto;')
-                        with self.virtual_trajectory_container:
-                            # Checkbox (no text)
-                            ui.checkbox(value=False, on_change=self._on_virtual_trajectory_toggle).props('dense').tooltip('Show virtual trajectory')
+                            # Virtual trajectory controls as overlay (initially hidden)
+                            self.virtual_trajectory_container = ui.row().classes('absolute bottom-0 left-0 right-0 items-center gap-3 p-2').style('background: transparent; pointer-events: auto;')
+                            with self.virtual_trajectory_container:
+                                # Checkbox (no text)
+                                ui.checkbox(value=False, on_change=self._on_virtual_trajectory_toggle).props('dense').tooltip('Show virtual trajectory')
 
-                            # Target coordinates
-                            with ui.row().classes('items-center gap-2'):
-                                ui.label('X').classes('text-caption')
-                                self.virtual_target_x = ui.number(
-                                    value=100.0,
-                                    min=0,
-                                    max=200,
-                                    step=0.5,
-                                    on_change=self._on_virtual_trajectory_change
-                                ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
+                                # Target coordinates
+                                with ui.row().classes('items-center gap-2'):
+                                    ui.label('X').classes('text-caption')
+                                    self.virtual_target_x = ui.number(
+                                        value=100.0,
+                                        min=0,
+                                        max=200,
+                                        step=0.5,
+                                        on_change=self._on_virtual_trajectory_change
+                                    ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
 
-                                ui.label('Y').classes('text-caption')
-                                self.virtual_target_y = ui.number(
-                                    value=100.0,
-                                    min=0,
-                                    max=200,
-                                    step=0.5,
-                                    on_change=self._on_virtual_trajectory_change
-                                ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
+                                    ui.label('Y').classes('text-caption')
+                                    self.virtual_target_y = ui.number(
+                                        value=100.0,
+                                        min=0,
+                                        max=200,
+                                        step=0.5,
+                                        on_change=self._on_virtual_trajectory_change
+                                    ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
 
-                                ui.label('Z').classes('text-caption')
-                                self.virtual_target_z = ui.number(
-                                    value=100.0,
-                                    min=0,
-                                    max=200,
-                                    step=0.5,
-                                    on_change=self._on_virtual_trajectory_change
-                                ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
+                                    ui.label('Z').classes('text-caption')
+                                    self.virtual_target_z = ui.number(
+                                        value=100.0,
+                                        min=0,
+                                        max=200,
+                                        step=0.5,
+                                        on_change=self._on_virtual_trajectory_change
+                                    ).props('dense outlined').classes('w-16').style('font-size: 0.75rem;')
 
-                            # Ring angle slider (compact)
-                            with ui.row().classes('items-center gap-1'):
-                                ui.label('Ring').classes('text-caption')
-                                self.virtual_ring_slider = ui.slider(
-                                    min=0,
-                                    max=180,
-                                    step=1,
-                                    value=90
-                                ).props('label-always color=primary dense').classes('w-32').style('font-size: 0.7rem;')
-                                self.virtual_ring_slider.on('update:model-value', self._on_virtual_trajectory_change)
+                                # Ring angle slider (compact)
+                                with ui.row().classes('items-center gap-1'):
+                                    ui.label('Ring').classes('text-caption')
+                                    self.virtual_ring_slider = ui.slider(
+                                        min=0,
+                                        max=180,
+                                        step=1,
+                                        value=90
+                                    ).props('label-always color=primary dense').classes('w-32').style('font-size: 0.7rem;')
+                                    self.virtual_ring_slider.on('update:model-value', self._on_virtual_trajectory_change)
 
-                            # Arc angle slider (compact)
-                            with ui.row().classes('items-center gap-1'):
-                                ui.label('Arc').classes('text-caption')
-                                self.virtual_arc_slider = ui.slider(
-                                    min=0,
-                                    max=180,
-                                    step=1,
-                                    value=90
-                                ).props('label-always color=primary dense').classes('w-32').style('font-size: 0.7rem;')
-                                self.virtual_arc_slider.on('update:model-value', self._on_virtual_trajectory_change)
+                                # Arc angle slider (compact)
+                                with ui.row().classes('items-center gap-1'):
+                                    ui.label('Arc').classes('text-caption')
+                                    self.virtual_arc_slider = ui.slider(
+                                        min=0,
+                                        max=180,
+                                        step=1,
+                                        value=90
+                                    ).props('label-always color=primary dense').classes('w-32').style('font-size: 0.7rem;')
+                                    self.virtual_arc_slider.on('update:model-value', self._on_virtual_trajectory_change)
 
-                        # Hide virtual trajectory controls initially
-                        self.virtual_trajectory_container.set_visibility(False)
+                            # Hide virtual trajectory controls initially
+                            self.virtual_trajectory_container.set_visibility(False)
 
-                        # Mesh opacity control as overlay (initially hidden)
-                        self.mesh_opacity_container = ui.row().classes('absolute bottom-0 left-0 right-0 items-center gap-3 p-2').style('background: rgba(30, 30, 30, 0.7); pointer-events: auto;')
-                        with self.mesh_opacity_container:
-                            ui.label('Mesh Opacity').classes('text-caption text-white')
-                            self.opacity_slider = ui.slider(
-                                min=0.1,
-                                max=1.0,
-                                step=0.05,
-                                value=0.5
-                            ).props('label-always color=primary dense').classes('w-64').style('font-size: 0.7rem;')
-                            # Only update on mouse release
-                            self.opacity_slider.on('change', self._on_opacity_change)
+                            # Mesh opacity control as overlay (initially hidden)
+                            self.mesh_opacity_container = ui.row().classes('absolute bottom-0 left-0 right-0 items-center gap-3 p-2').style('background: rgba(30, 30, 30, 0.7); pointer-events: auto;')
+                            with self.mesh_opacity_container:
+                                ui.label('Mesh Opacity').classes('text-caption text-white')
+                                self.opacity_slider = ui.slider(
+                                    min=0.1,
+                                    max=1.0,
+                                    step=0.05,
+                                    value=0.5
+                                ).props('label-always color=primary dense').classes('w-64').style('font-size: 0.7rem;')
+                                # Only update on mouse release
+                                self.opacity_slider.on('change', self._on_opacity_change)
 
-                        # Hide opacity controls initially
-                        self.mesh_opacity_container.set_visibility(False)
+                            # Hide opacity controls initially
+                            self.mesh_opacity_container.set_visibility(False)
 
     async def _handle_file_upload(self, e: events.UploadEventArguments):
         """Handle file upload."""
@@ -276,7 +296,8 @@ class VisualizePage:
             elif file_name.endswith('.nii') or file_name.endswith('.nii.gz'):
                 await self._load_nifti_file(temp_path, file_name, file_size_kb)
             elif file_name.endswith('.txt'):
-                await self._load_label_file(temp_path, file_name, file_size_kb)
+                # Check if it's a batch file (list of paths) or a label file
+                await self._load_txt_file(temp_path, file_name, file_size_kb)
             else:
                 notify_error('Unsupported file type. Please upload CSV, JSON, NIfTI, or TXT.')
                 return
@@ -372,7 +393,8 @@ class VisualizePage:
                 'size_kb': file_size_kb,
                 'file_path': file_path,
                 'visible': True,
-                'show_trajectory': True
+                'show_trajectory': True,
+                'show_streamtube': False
             })
             notify_success(f'Loaded {metadata["num_electrodes"]} electrodes from {file_name}')
 
@@ -498,32 +520,144 @@ class VisualizePage:
         else:
             notify_success(f'Loaded 3D NIfTI ({shape_str}) from {file_name}')
 
+    async def _load_txt_file(self, file_path: Path, file_name: str, file_size_kb: float):
+        """Load TXT file - either a batch file with paths or a label file."""
+        try:
+            # Read the file
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+
+            # Remove empty lines and comments
+            lines = [line.strip() for line in lines if line.strip() and not line.strip().startswith('#')]
+
+            if not lines:
+                notify_error('TXT file is empty')
+                return
+
+            # Check if it's a batch file (paths to files)
+            # Batch files contain file paths (absolute or starting with ./ or ~/)
+            first_line = lines[0]
+            is_batch_file = (
+                first_line.startswith('/') or
+                first_line.startswith('./') or
+                first_line.startswith('~/') or
+                first_line.startswith('../')
+            )
+
+            if is_batch_file:
+                await self._load_batch_file(file_path, lines)
+            else:
+                # It's a label file
+                await self._load_label_file(file_path, file_name, file_size_kb)
+
+        except Exception as e:
+            notify_error(f'Failed to load TXT file: {str(e)}')
+            import traceback
+            traceback.print_exc()
+
+    async def _load_batch_file(self, batch_file_path: Path, file_paths: list):
+        """Load multiple datasets from a batch file containing file paths."""
+        loaded_count = 0
+        failed_count = 0
+
+        notify_info(f'Loading {len(file_paths)} files from batch...')
+
+        for path_str in file_paths:
+            path_str = path_str.strip()
+            if not path_str:
+                continue
+
+            # Expand ~ and resolve relative paths
+            file_path = Path(path_str).expanduser()
+
+            # If relative path, make it relative to the batch file's directory
+            if not file_path.is_absolute():
+                file_path = (batch_file_path.parent / file_path).resolve()
+
+            # Check if file exists
+            if not file_path.exists():
+                notify_error(f'File not found: {file_path}')
+                failed_count += 1
+                continue
+
+            # Check if file is already loaded
+            if any(f['filename'] == file_path.name for f in self.loaded_files):
+                notify_info(f'Skipping already loaded: {file_path.name}')
+                continue
+
+            # Load the file based on extension
+            try:
+                file_size_kb = file_path.stat().st_size / 1024
+
+                if file_path.suffix == '.csv':
+                    await self._load_surgical_csv(file_path, file_path.name, file_size_kb)
+                    loaded_count += 1
+                elif file_path.suffix == '.json':
+                    await self._load_json_file(file_path, file_path.name, file_size_kb)
+                    loaded_count += 1
+                elif file_path.suffix in ['.nii', '.gz']:
+                    await self._load_nifti_file(file_path, file_path.name, file_size_kb)
+                    loaded_count += 1
+                elif file_path.suffix == '.txt':
+                    await self._load_label_file(file_path, file_path.name, file_size_kb)
+                    loaded_count += 1
+                else:
+                    notify_error(f'Unsupported file type: {file_path.name}')
+                    failed_count += 1
+
+            except Exception as e:
+                notify_error(f'Failed to load {file_path.name}: {str(e)}')
+                failed_count += 1
+                import traceback
+                traceback.print_exc()
+
+        # Summary notification
+        if loaded_count > 0:
+            notify_success(f'Batch load complete: {loaded_count} files loaded, {failed_count} failed')
+        else:
+            notify_error(f'Batch load failed: No files loaded, {failed_count} failed')
+
     async def _load_label_file(self, file_path: Path, file_name: str, file_size_kb: float):
-        """Load and validate label file for NIfTI volumes."""
+        """Load and validate label file for NIfTI volumes.
+
+        Supports formats:
+            index  label
+            index  label  #hexcolor
+            index  label  #hexcolor  visible(0/1)
+        """
         try:
             # Read the label file
             with open(file_path, 'r') as f:
                 lines = f.readlines()
 
-            # Parse labels (format: "index<whitespace>label")
+            # Parse labels
             labels = {}
             for line in lines:
                 line = line.strip()
                 if not line or line.startswith('#'):  # Skip empty lines and comments
                     continue
 
-                parts = line.split(None, 1)  # Split on whitespace, max 2 parts
-                if len(parts) != 2:
+                parts = line.split()
+                if len(parts) < 2:
                     notify_error(f'Invalid label file format at line: {line}')
                     return
 
                 try:
                     idx = int(parts[0])
-                    label = parts[1].strip()
-                    labels[idx] = label
                 except ValueError:
                     notify_error(f'Invalid index in label file: {parts[0]}')
                     return
+
+                label = parts[1]
+                color = None
+                visible = True
+
+                if len(parts) >= 3 and parts[2].startswith('#'):
+                    color = parts[2]
+                if len(parts) >= 4:
+                    visible = parts[3] != '0'
+
+                labels[idx] = {'label': label, 'color': color, 'visible': visible}
 
             if not labels:
                 notify_error('Label file is empty or has no valid labels')
@@ -668,6 +802,14 @@ class VisualizePage:
                                             on_click=lambda f=file_info: self._toggle_electrode_trajectory(f)
                                         ).props(f'flat dense round size=xs color={traj_color}').tooltip('Toggle trajectory')
 
+                                        # Streamtube toggle
+                                        streamtube_icon = 'blur_on' if file_info.get('show_streamtube', False) else 'blur_on'
+                                        streamtube_color = 'primary' if file_info.get('show_streamtube', False) else 'grey'
+                                        ui.button(
+                                            icon=streamtube_icon,
+                                            on_click=lambda f=file_info: self._toggle_electrode_streamtube(f)
+                                        ).props(f'flat dense round size=xs color={streamtube_color}').tooltip('Toggle streamtube')
+
                                 # Surgical-specific toggle buttons
                                 if file_info['type'] == 'surgical':
                                     with ui.row().classes('items-center gap-1 mt-1'):
@@ -796,14 +938,12 @@ class VisualizePage:
         has_nifti = any(f['type'] == 'nifti' for f in self.loaded_files)
         self.mesh_opacity_container.set_visibility(has_nifti)
 
-
     def _download_3d_html(self):
         """Download the current 3D view as a standalone HTML file."""
         if not self.current_figure:
             ui.notify('No 3D plot to export', type='warning')
             return
         import tempfile
-        from datetime import datetime
         fig = self.current_figure
         fig_copy = go.Figure(fig)
         fig_copy.update_layout(height=None, margin=dict(l=0, r=0, t=0, b=0))
@@ -812,28 +952,29 @@ class VisualizePage:
             full_html=True,
             config={'responsive': True}
         )
-        # Inject styles to fill the viewport
+        # Inject styles to fill the viewport and disclaimer banner
         html_content = html_content.replace(
             '<head>',
             '<head><style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden}'
-            '.plotly-graph-div{width:100%!important;height:100vh!important}</style>'
+            '.plotly-graph-div{width:100%!important;height:100vh!important}'
+            '.disclaimer-banner{position:fixed;bottom:14px;right:14px;'
+            'padding:8px 18px;background:#fff8e1;border:1px solid #ffe082;border-radius:6px;'
+            'font-family:Arial,sans-serif;font-size:14px;color:#b57a00;z-index:9999;'
+            'text-align:center;line-height:1.4;box-shadow:0 2px 6px rgba(0,0,0,0.15)}'
+            '.disclaimer-banner strong{color:#e65100}'
+            '</style>'
         )
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'dbstoolbox_3dvis_{timestamp}.html'
+        html_content = html_content.replace(
+            '<body>',
+            '<body><div class="disclaimer-banner">'
+            '<strong>&#9888; Research Use Only</strong><br>'
+            'Not cleared for clinical or diagnostic use'
+            '</div>'
+        )
         tmp = tempfile.NamedTemporaryFile(suffix='.html', prefix='3d_view_', delete=False, mode='w')
         tmp.write(html_content)
         tmp.close()
-        ui.download(tmp.name, filename=filename)
-
-    def _build_brain_shift_panel(self, electrode_files: list):
-        """Build the brain shift tab content using the component."""
-        panel = BrainShiftPanel(electrode_files)
-        panel.build()
-
-    def _build_stimulation_targeting_panel(self, nifti_files: list, electrode_files: list):
-        """Build the stimulation targeting tab content using the component."""
-        panel = StimulationTargetingPanel(nifti_files, electrode_files)
-        panel.build()
+        ui.download(tmp.name, filename='3d_view.html')
 
     def _toggle_surgical_mer_tracks(self, file_info: dict):
         """Toggle MER tracks visibility for surgical data."""
@@ -899,6 +1040,14 @@ class VisualizePage:
     def _toggle_electrode_trajectory(self, file_info: dict):
         """Toggle trajectory visibility for electrode data."""
         file_info['show_trajectory'] = not file_info.get('show_trajectory', True)
+
+        # Refresh the plot
+        self._update_plot()
+        self._update_file_list()
+
+    def _toggle_electrode_streamtube(self, file_info: dict):
+        """Toggle streamtube visibility for electrode data."""
+        file_info['show_streamtube'] = not file_info.get('show_streamtube', False)
 
         # Refresh the plot
         self._update_plot()
@@ -1265,9 +1414,9 @@ class VisualizePage:
                 const updates = {{}};
                 const indices = [];
 
-                // Find all Mesh3d traces (NIfTI meshes)
+                // Find NIfTI mesh traces (skip electrode tubes/contacts which have opacity 1.0)
                 for (let i = 0; i < plot.data.length; i++) {{
-                    if (plot.data[i].type === 'mesh3d') {{
+                    if (plot.data[i].type === 'mesh3d' && plot.data[i].opacity !== 1.0) {{
                         indices.push(i);
                     }}
                 }}
@@ -1675,8 +1824,7 @@ class VisualizePage:
 
                 label = f"{patient_id} {hemisphere} {target_name}".strip()
 
-                color_idx = (idx + color_offset) % 360
-                color = f'hsl({color_idx * 60}, 70%, 50%)'
+                color = TRACE_COLORS[(idx + color_offset) % len(TRACE_COLORS)]
 
                 # Add trajectory line (if enabled)
                 if show_trajectory:
@@ -1851,11 +1999,11 @@ class VisualizePage:
 
                     # Define colors for different MER track types
                     mer_track_colors = {
-                        'anterior': 'rgba(255, 100, 100, 0.6)',    # Light red
-                        'posterior': 'rgba(100, 100, 255, 0.6)',   # Light blue
-                        'medial': 'rgba(100, 255, 100, 0.6)',      # Light green
-                        'lateral': 'rgba(255, 255, 100, 0.6)',     # Light yellow
-                        'central': 'rgba(200, 200, 200, 0.6)'      # Light gray
+                        'anterior': 'rgba(255, 0, 0, 0.6)',        # Red
+                        'posterior': 'rgba(0, 0, 255, 0.6)',       # Blue
+                        'medial': 'rgba(0, 255, 0, 0.6)',          # Green
+                        'lateral': 'rgba(255, 255, 0, 0.6)',       # Yellow
+                        'central': 'rgba(220, 220, 220, 0.6)'      # Light gray/white
                     }
 
                     # Visualize each MER track
@@ -2009,45 +2157,232 @@ class VisualizePage:
         data = file_info['data']
         electrodes = data.get('electrodes', [])
 
-        # Get toggle state
+        # Get toggle states
         show_trajectory = file_info.get('show_trajectory', True)
+        show_streamtube = file_info.get('show_streamtube', False)
 
         # Process each electrode
         for idx, electrode in enumerate(electrodes):
-            color_idx = (idx + color_offset) % 360
-            color = f'hsl({color_idx * 60}, 70%, 50%)'
+            color = TRACE_COLORS[(idx + color_offset) % len(TRACE_COLORS)]
+            elec_label = ' - '.join(filter(None, [f'E{idx+1}', electrode.get('electrode_type', ''), electrode.get('side', '').capitalize()]))
 
-            # Get trajectory coordinates
-            if show_trajectory and 'trajectory_coordinates' in electrode:
+            # Get trajectory coordinates (from array or polynomial)
+            trajectory = None
+            if 'trajectory_coordinates' in electrode:
                 trajectory = np.array(electrode['trajectory_coordinates'])
+            elif 'polynomial' in electrode and not data.get('metadata', {}).get('transformed', False):
+                poly_coeffs = np.array(electrode['polynomial'])
+                t_vals = np.linspace(0, 1, 100)
+                trajectory = np.array([
+                    [np.polyval(poly_coeffs[:, dim], t) for dim in range(3)]
+                    for t in t_vals
+                ])
 
-                # Add trajectory line
-                fig.add_trace(go.Scatter3d(
-                    x=trajectory[:, 0],
-                    y=trajectory[:, 1],
-                    z=trajectory[:, 2],
-                    mode='lines',
-                    name=f'Electrode {idx+1}',
-                    line=dict(width=6, color=color),
-                    showlegend=True
-                ))
+            if trajectory is not None:
 
-            # Get contact positions
-            if 'contact_positions_3d' in electrode:
+                # Always add trajectory line
+                if show_trajectory and len(trajectory) > 1:
+                    fig.add_trace(go.Scatter3d(
+                        x=trajectory[:, 0].tolist(),
+                        y=trajectory[:, 1].tolist(),
+                        z=trajectory[:, 2].tolist(),
+                        mode='lines',
+                        name=f'{elec_label}',
+                        line=dict(width=6, color=color),
+                        showlegend=True
+                    ))
+
+                # Add streamtube if enabled (using cylindrical mesh segments)
+                if show_streamtube and len(trajectory) > 1:
+                    # Create cylindrical mesh for the trajectory
+                    # Diameter is 1.25mm, so radius is 0.625mm
+                    radius = 0.625
+                    n_segments = len(trajectory) - 1
+                    n_sides = 8  # Number of sides for the cylinder
+
+                    all_vertices = []
+                    all_faces = []
+                    vertex_offset = 0
+
+                    # Create a cylinder segment for each pair of trajectory points
+                    for seg_idx in range(n_segments):
+                        p1 = trajectory[seg_idx]
+                        p2 = trajectory[seg_idx + 1]
+
+                        # Calculate direction vector
+                        direction = p2 - p1
+                        length = np.linalg.norm(direction)
+
+                        if length < 1e-6:  # Skip very small segments
+                            continue
+
+                        direction = direction / length
+
+                        # Find perpendicular vectors for cylinder
+                        # Choose an arbitrary vector not parallel to direction
+                        if abs(direction[0]) < 0.9:
+                            perp1 = np.array([1, 0, 0])
+                        else:
+                            perp1 = np.array([0, 1, 0])
+
+                        # Create two perpendicular vectors
+                        perp1 = perp1 - np.dot(perp1, direction) * direction
+                        perp1 = perp1 / np.linalg.norm(perp1)
+                        perp2 = np.cross(direction, perp1)
+
+                        # Generate vertices for this cylinder segment
+                        for end_idx, point in enumerate([p1, p2]):
+                            for i in range(n_sides):
+                                angle = 2 * np.pi * i / n_sides
+                                vertex = (point +
+                                         radius * np.cos(angle) * perp1 +
+                                         radius * np.sin(angle) * perp2)
+                                all_vertices.append(vertex)
+
+                        # Generate faces for this segment (correct winding for outward normals)
+                        for i in range(n_sides):
+                            next_i = (i + 1) % n_sides
+
+                            # Two triangles per face with counter-clockwise winding
+                            v1 = vertex_offset + i
+                            v2 = vertex_offset + next_i
+                            v3 = vertex_offset + n_sides + i
+                            v4 = vertex_offset + n_sides + next_i
+
+                            # First triangle: v1 -> v3 -> v2 (outward normal)
+                            all_faces.append([v1, v3, v2])
+                            # Second triangle: v2 -> v3 -> v4 (outward normal)
+                            all_faces.append([v2, v3, v4])
+
+                        vertex_offset += 2 * n_sides
+
+                    if all_vertices and all_faces:
+                        # Convert to numpy arrays
+                        vertices = np.array(all_vertices)
+                        faces = np.array(all_faces)
+
+                        # Add mesh trace (grey trajectory tube)
+                        fig.add_trace(go.Mesh3d(
+                            x=vertices[:, 0].tolist(),
+                            y=vertices[:, 1].tolist(),
+                            z=vertices[:, 2].tolist(),
+                            i=faces[:, 0].tolist(),
+                            j=faces[:, 1].tolist(),
+                            k=faces[:, 2].tolist(),
+                            color='grey',
+                            opacity=1.0,
+                            name=f'{elec_label} Tube',
+                            showlegend=False,
+                            hoverinfo='skip',
+                            lighting=dict(ambient=0.5, diffuse=0.8, specular=0.2),
+                            flatshading=False
+                        ))
+
+            # Get contact positions and add contact cylinders if streamtube is enabled
+            if show_streamtube and 'contact_positions_3d' in electrode:
+                contacts = np.array(electrode['contact_positions_3d'])
+
+                # Create cylinder for each contact
+                contact_radius = 0.635  # 1.27mm diameter
+                contact_height = 1.5  # 1.5mm tall
+                n_sides = 24  # More sides for smoother contacts
+
+                for contact_idx, contact_pos in enumerate(contacts):
+                    # Determine orientation - use trajectory direction if available
+                    if trajectory is not None and len(trajectory) > 1:
+                        # Find closest trajectory point to determine orientation
+                        distances = np.linalg.norm(trajectory - contact_pos, axis=1)
+                        closest_idx = np.argmin(distances)
+
+                        # Get direction from trajectory
+                        if closest_idx < len(trajectory) - 1:
+                            direction = trajectory[closest_idx + 1] - trajectory[closest_idx]
+                        else:
+                            direction = trajectory[closest_idx] - trajectory[closest_idx - 1]
+
+                        direction = direction / np.linalg.norm(direction)
+                    else:
+                        # Default to z-axis if no trajectory
+                        direction = np.array([0, 0, 1])
+
+                    # Find perpendicular vectors
+                    if abs(direction[0]) < 0.9:
+                        perp1 = np.array([1, 0, 0])
+                    else:
+                        perp1 = np.array([0, 1, 0])
+
+                    perp1 = perp1 - np.dot(perp1, direction) * direction
+                    perp1 = perp1 / np.linalg.norm(perp1)
+                    perp2 = np.cross(direction, perp1)
+
+                    # Create vertices for contact cylinder
+                    contact_vertices = []
+                    contact_faces = []
+
+                    # Bottom and top centers along the direction
+                    bottom_center = contact_pos - direction * (contact_height / 2)
+                    top_center = contact_pos + direction * (contact_height / 2)
+
+                    # Generate vertices for bottom and top circles
+                    for end_idx, center in enumerate([bottom_center, top_center]):
+                        for i in range(n_sides):
+                            angle = 2 * np.pi * i / n_sides
+                            vertex = (center +
+                                     contact_radius * np.cos(angle) * perp1 +
+                                     contact_radius * np.sin(angle) * perp2)
+                            contact_vertices.append(vertex)
+
+                    # Generate side faces
+                    for i in range(n_sides):
+                        next_i = (i + 1) % n_sides
+
+                        v1 = i
+                        v2 = next_i
+                        v3 = n_sides + i
+                        v4 = n_sides + next_i
+
+                        # Two triangles per face with correct winding
+                        contact_faces.append([v1, v3, v2])
+                        contact_faces.append([v2, v3, v4])
+
+                    # Convert to numpy arrays
+                    contact_vertices = np.array(contact_vertices)
+                    contact_faces = np.array(contact_faces)
+
+                    # Add contact cylinder mesh (red)
+                    fig.add_trace(go.Mesh3d(
+                        x=contact_vertices[:, 0].tolist(),
+                        y=contact_vertices[:, 1].tolist(),
+                        z=contact_vertices[:, 2].tolist(),
+                        i=contact_faces[:, 0].tolist(),
+                        j=contact_faces[:, 1].tolist(),
+                        k=contact_faces[:, 2].tolist(),
+                        color='red',
+                        opacity=1.0,
+                        name=f'{elec_label} C{contact_idx+1}',
+                        showlegend=False,
+                        hoverinfo='skip',
+                        lighting=dict(ambient=0.5, diffuse=0.8, specular=0.2),
+                        flatshading=False
+                    ))
+
+            # Get contact positions (only show scatter points if streamtube is not enabled)
+            if 'contact_positions_3d' in electrode and not show_streamtube:
                 contacts = np.array(electrode['contact_positions_3d'])
 
                 # Add contact points
                 hover_text = [
-                    f'E{idx+1} C{i+1}<br>[{c[0]:.1f}, {c[1]:.1f}, {c[2]:.1f}]'
+                    f'{elec_label} C{i+1}<br>[{c[0]:.1f}, {c[1]:.1f}, {c[2]:.1f}]'
                     for i, c in enumerate(contacts)
                 ]
 
+                # Use .tolist() to ensure JSON serialization works in browser
                 fig.add_trace(go.Scatter3d(
-                    x=contacts[:, 0],
-                    y=contacts[:, 1],
-                    z=contacts[:, 2],
+                    x=contacts[:, 0].tolist(),
+                    y=contacts[:, 1].tolist(),
+                    z=contacts[:, 2].tolist(),
                     mode='markers',
-                    name=f'E{idx+1} Contacts',
+                    name=f'{elec_label} Contacts',
                     marker=dict(
                         size=8,
                         color=color,
@@ -2058,6 +2393,74 @@ class VisualizePage:
                     hoverinfo='text',
                     showlegend=False
                 ))
+
+            # Add orientation marker vectors (directional DBS electrodes)
+            orientation = electrode.get('orientation')
+            if orientation and orientation.get('has_markers') and 'markers' in orientation:
+                marker_colors = {'A': '#FFA500', 'B': '#1E90FF', 'C': '#32CD32'}
+                vector_length_mm = 5.0
+
+                # Build markers to render (A, B from data + computed C)
+                markers_to_render = {}
+                for mk, md in orientation['markers'].items():
+                    p = md.get('position_xyz')
+                    d = md.get('direction_vector')
+                    if p is not None and d is not None:
+                        markers_to_render[mk] = (np.array(p), np.array(d))
+
+                # Compute virtual C marker: position midpoint, direction = -(A+B) normalized
+                if 'A' in markers_to_render and 'B' in markers_to_render:
+                    pos_a, dir_a = markers_to_render['A']
+                    pos_b, dir_b = markers_to_render['B']
+                    pos_c = (pos_a + pos_b) / 2.0
+                    dir_c = -(dir_a + dir_b)
+                    norm_c = np.linalg.norm(dir_c)
+                    if norm_c > 1e-10:
+                        dir_c = dir_c / norm_c
+                    markers_to_render['C'] = (pos_c, dir_c)
+
+                for marker_key, (pos, direction) in markers_to_render.items():
+                    end = pos + direction * vector_length_mm
+                    m_color = marker_colors.get(marker_key, color)
+
+                    # Marker vector line
+                    fig.add_trace(go.Scatter3d(
+                        x=[pos[0], end[0]],
+                        y=[pos[1], end[1]],
+                        z=[pos[2], end[2]],
+                        mode='lines',
+                        line=dict(color=m_color, width=3),
+                        name=f'{elec_label} Marker {marker_key}',
+                        showlegend=False,
+                        hovertemplate=f'{elec_label} Marker {marker_key}<extra></extra>'
+                    ))
+
+                    # Arrowhead cone at the end of the vector
+                    fig.add_trace(go.Cone(
+                        x=[end[0]], y=[end[1]], z=[end[2]],
+                        u=[direction[0]], v=[direction[1]], w=[direction[2]],
+                        sizemode='absolute',
+                        sizeref=1.0,
+                        showscale=False,
+                        colorscale=[[0, m_color], [1, m_color]],
+                        name=f'{elec_label} Marker {marker_key}',
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+
+                    # Floating label at the arrow tip
+                    fig.add_trace(go.Scatter3d(
+                        x=[end[0]],
+                        y=[end[1]],
+                        z=[end[2]],
+                        mode='text',
+                        text=[marker_key],
+                        textposition='top center',
+                        textfont=dict(size=12, color=m_color),
+                        name=f'{elec_label} Marker {marker_key}',
+                        showlegend=False,
+                        hovertemplate=f'{elec_label} Marker {marker_key}<br>({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f})<extra></extra>'
+                    ))
 
         # Return updated color offset
         return color_offset + len(electrodes)
@@ -2080,8 +2483,7 @@ class VisualizePage:
                 continue
 
             # Create color for this fiducial
-            color_idx = (idx + color_offset) % 360
-            color = f'hsl({color_idx * 60}, 70%, 50%)'
+            color = TRACE_COLORS[(idx + color_offset) % len(TRACE_COLORS)]
 
             # Add fiducial rod line
             # Only show legend for the first fiducial, but group all together
@@ -2175,21 +2577,34 @@ class VisualizePage:
                     verts, faces = None, None
 
                 if verts is not None and len(verts) > 0:
-                    # Color based on volume index
-                    color_idx = (vol_idx + color_offset) % 12
-                    colors = [
-                        '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
-                        '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
-                        '#F8B739', '#52B788', '#E76F51', '#A8DADC'
-                    ]
-                    color = colors[color_idx]
-
-                    # Add mesh trace
-                    # Check if we have a label for this volume
+                    # Check label data for this volume
+                    label_entry = None
                     if hasattr(self, 'nifti_labels') and self.nifti_labels and filename in self.nifti_labels:
-                        label = self.nifti_labels[filename].get(vol_idx, f'nifti volume {vol_idx + 1}')
+                        label_entry = self.nifti_labels[filename].get(vol_idx)
+
+                    # Skip hidden volumes
+                    if label_entry and isinstance(label_entry, dict) and not label_entry.get('visible', True):
+                        continue
+
+                    # Resolve label
+                    if label_entry:
+                        if isinstance(label_entry, dict):
+                            label = label_entry.get('label', f'nifti volume {vol_idx + 1}')
+                        else:
+                            label = label_entry  # backward compat: plain string
                     else:
                         label = f'nifti volume {vol_idx + 1}'
+
+                    # Resolve color: label file override > default palette
+                    if label_entry and isinstance(label_entry, dict) and label_entry.get('color'):
+                        color = label_entry['color']
+                    else:
+                        default_colors = [
+                            '#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A',
+                            '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+                            '#F8B739', '#52B788', '#E76F51', '#A8DADC'
+                        ]
+                        color = default_colors[(vol_idx + color_offset) % len(default_colors)]
 
                     fig.add_trace(go.Mesh3d(
                         x=verts[:, 0],
@@ -2309,16 +2724,32 @@ class VisualizePage:
 
                 if verts is not None and len(verts) > 0:
                     print(f"[Mesh Generation] Adding trace for volume {vol_idx + 1} with {len(verts)} vertices")
-                    # Color based on volume index
-                    color_idx = (vol_idx + color_offset) % 12
-                    color = colors[color_idx]
 
-                    # Add mesh trace
-                    # Check if we have a label for this volume
+                    # Check label data for this volume
+                    label_entry = None
                     if hasattr(self, 'nifti_labels') and self.nifti_labels and filename in self.nifti_labels:
-                        label = self.nifti_labels[filename].get(vol_idx, f'nifti volume {vol_idx + 1}')
+                        label_entry = self.nifti_labels[filename].get(vol_idx)
+
+                    # Skip hidden volumes
+                    if label_entry and isinstance(label_entry, dict) and not label_entry.get('visible', True):
+                        print(f"[Mesh Generation] Volume {vol_idx + 1} hidden by label file, skipping")
+                        continue
+
+                    # Resolve label
+                    if label_entry:
+                        if isinstance(label_entry, dict):
+                            label = label_entry.get('label', f'nifti volume {vol_idx + 1}')
+                        else:
+                            label = label_entry
                     else:
                         label = f'nifti volume {vol_idx + 1}'
+
+                    # Resolve color
+                    if label_entry and isinstance(label_entry, dict) and label_entry.get('color'):
+                        color = label_entry['color']
+                    else:
+                        color_idx = (vol_idx + color_offset) % len(colors)
+                        color = colors[color_idx]
 
                     fig.add_trace(go.Mesh3d(
                         x=verts[:, 0],
@@ -2561,3 +2992,34 @@ class VisualizePage:
         return direction, arc_axis
 
 
+class UtilsPage:
+    """Main utils page with transform and visualize tabs."""
+
+    def __init__(self):
+        self.transform_page = SimpleTransformPage()
+        self.visualize_page = VisualizePage()
+        self.tabs = None
+
+    def create_ui(self):
+        """Create the utils page interface."""
+        with ui.column().classes('w-full h-full'):
+            # Create tabs
+            with ui.tabs().classes('w-full') as tabs:
+                self.tabs = tabs
+                ui.tab('transform', label='Transform', icon='grid_off')
+                ui.tab('visualize', label='Visualize', icon='visibility')
+
+            # Create tab panels (animated=False prevents transition issues)
+            with ui.tab_panels(tabs, value='transform', animated=False).classes('w-full h-full'):
+                with ui.tab_panel('transform'):
+                    self.transform_page.create_ui(self.visualize_page, self.tabs)
+
+                with ui.tab_panel('visualize'):
+                    self.visualize_page.create_ui()
+
+
+
+def utils_page():
+    """Create the utils page."""
+    page = UtilsPage()
+    page.create_ui()

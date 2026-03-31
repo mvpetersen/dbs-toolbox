@@ -14,7 +14,6 @@ from dbstoolbox.utils.validate_ants_transform import validate_ants_transform
 from dbstoolbox.utils.transform_coordinates import (
     transform_pypacer_reconstruction,
     transform_surgical_csv,
-    transform_ants_points_csv,
     convert_csv_to_json
 )
 from dbstoolbox.utils.temp_file_manager import save_uploaded_file, get_session_file_path, cleanup_session
@@ -280,17 +279,10 @@ Note: Stereotactic frame transforms are handled separately and will always be ap
 
                 if is_valid and metadata:
                     self.data_metadata = metadata
-                    # Check if ANTs format or surgical data
-                    if metadata.get('is_ants_points'):
-                        self.data_status_label.set_text(
-                            f'Valid ANTs points CSV ({file_size_kb:.1f} KB)'
-                        )
-                        notify_success(f'Loaded ANTs point data: {file_name}')
-                    else:
-                        self.data_status_label.set_text(
-                            f'Valid surgical data CSV ({file_size_kb:.1f} KB)'
-                        )
-                        notify_success(f'Loaded surgical data: {file_name}')
+                    self.data_status_label.set_text(
+                        f'Valid surgical data CSV ({file_size_kb:.1f} KB)'
+                    )
+                    notify_success(f'Loaded surgical data: {file_name}')
                 else:
                     # Show error but don't load
                     self.data_file = None
@@ -537,35 +529,6 @@ Note: Stereotactic frame transforms are handled separately and will always be ap
                                         ui.label('Coordinates:').classes('text-caption text-grey-8 font-medium')
                                         ui.label(str(self.data_metadata.get('num_coordinates', 0))).classes('text-caption text-grey-8')
 
-                        elif self.data_metadata.get('is_ants_points'):
-                            # ANTs points CSV
-                            with ui.row().classes('items-center gap-2 mb-2'):
-                                ui.icon('check_circle', color='positive', size='sm')
-                                ui.label('ANTs Points CSV').classes('text-subtitle2 font-medium')
-
-                            with ui.column().classes('gap-1'):
-                                # Number of points
-                                with ui.row().classes('items-center gap-2'):
-                                    ui.icon('place', size='xs').classes('text-grey-7')
-                                    ui.label('Points:').classes('text-caption text-grey-8 font-medium')
-                                    ui.label(str(self.data_metadata.get('num_coordinates', 0))).classes('text-caption text-grey-8')
-
-                                # Coordinate ranges
-                                if 'coordinate_ranges' in self.data_metadata:
-                                    ranges = self.data_metadata['coordinate_ranges']
-                                    with ui.row().classes('items-center gap-2'):
-                                        ui.icon('straighten', size='xs').classes('text-grey-7')
-                                        ui.label('X range:').classes('text-caption text-grey-8 font-medium')
-                                        ui.label(f"[{ranges['x']['min']:.1f}, {ranges['x']['max']:.1f}]").classes('text-caption text-grey-8')
-                                    with ui.row().classes('items-center gap-2'):
-                                        ui.icon('straighten', size='xs').classes('text-grey-7')
-                                        ui.label('Y range:').classes('text-caption text-grey-8 font-medium')
-                                        ui.label(f"[{ranges['y']['min']:.1f}, {ranges['y']['max']:.1f}]").classes('text-caption text-grey-8')
-                                    with ui.row().classes('items-center gap-2'):
-                                        ui.icon('straighten', size='xs').classes('text-grey-7')
-                                        ui.label('Z range:').classes('text-caption text-grey-8 font-medium')
-                                        ui.label(f"[{ranges['z']['min']:.1f}, {ranges['z']['max']:.1f}]").classes('text-caption text-grey-8')
-
     def _update_transform_button_state(self):
         """Enable/disable transform button based on loaded data."""
         if self.data_file and len(self.transforms) > 0 and not self.has_current_output:
@@ -603,7 +566,6 @@ Note: Stereotactic frame transforms are handled separately and will always be ap
                 print(f"   - Inverted: {transform.inverted}")
                 print(f"   - Type: {transform.transform_category}")
 
-
             # REVERSE the lists so ANTs applies them in the order the user uploaded
             # User thinks: "I want A→C, so upload C→B then B→A"
             # We reverse: [B→A, C→B]
@@ -618,8 +580,6 @@ Note: Stereotactic frame transforms are handled separately and will always be ap
             print(f"  whichtoinvert = {invert_flags}")
             print(f"\nANTs will apply in REVERSE, giving the original upload order")
             print("="*60 + "\n")
-
-
 
             # Apply transformations based on data type
             if self.data_filename.endswith('.json'):
@@ -681,92 +641,55 @@ Note: Stereotactic frame transforms are handled separately and will always be ap
             return
 
     async def _transform_csv_data(self, transform_files: List[Path], invert_flags: List[bool], transform_types: List[str]):
-        """Transform surgical data CSV or ANTs points CSV."""
+        """Transform surgical data CSV."""
         # Load CSV data
         with open(self.data_file, 'r', encoding='utf-8') as f:
             reader = csv_module.DictReader(f)
             csv_data = list(reader)
             fieldnames = reader.fieldnames
 
-        # Check if ANTs format or surgical data
-        is_ants_format = self.data_metadata and self.data_metadata.get('is_ants_points')
-
         # Transform coordinates (run in executor to avoid blocking UI)
         import concurrent.futures
         loop = asyncio.get_event_loop()
 
-        if is_ants_format:
-            # Transform ANTs points
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                transformed_data = await loop.run_in_executor(
-                    executor,
-                    transform_ants_points_csv,
-                    csv_data, transform_files, invert_flags, transform_types
-                )
-        else:
-            # Transform surgical data
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                transformed_data = await loop.run_in_executor(
-                    executor,
-                    transform_surgical_csv,
-                    csv_data, transform_files, invert_flags, transform_types
-                )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            transformed_data = await loop.run_in_executor(
+                executor,
+                transform_surgical_csv,
+                csv_data, transform_files, invert_flags, transform_types
+            )
 
-        # Handle output based on format
+        # Add new columns to fieldnames if not present
+        new_fieldnames = list(fieldnames)
+
+        # Add original coordinate and angle columns
+        for col in ['x_original', 'y_original', 'z_original', 'ring_original', 'arc_original']:
+            if col not in new_fieldnames:
+                # Insert after the corresponding coordinate/angle column
+                base_col = col.split('_')[0]
+                if base_col in new_fieldnames:
+                    idx = new_fieldnames.index(base_col) + 1
+                    new_fieldnames.insert(idx, col)
+
+        # Add virtual entry point columns (from transformed surgical data)
+        for col in ['entry_x', 'entry_y', 'entry_z']:
+            if col not in new_fieldnames:
+                new_fieldnames.append(col)
+
+        # Convert to JSON and save to session directory
         base_filename = self.data_filename.rsplit('.', 1)[0]
+        json_data = convert_csv_to_json(transformed_data)
+        json_output_filename = f"{base_filename}_transformed.json"
+        json_output_path = get_session_file_path(json_output_filename, self.session_id)
 
-        if is_ants_format:
-            # For ANTs format, save as CSV with updated coordinates
-            csv_output_filename = f"{base_filename}_transformed.csv"
-            csv_output_path = get_session_file_path(csv_output_filename, self.session_id)
+        with open(json_output_path, 'w') as f:
+            json.dump(json_data, f, indent=2)
 
-            # Determine output columns (add original columns if not present)
-            output_fieldnames = list(fieldnames)
-            for col in ['x_original', 'y_original', 'z_original']:
-                if col not in output_fieldnames:
-                    output_fieldnames.append(col)
+        # Store only JSON file
+        self.transformed_files = [json_output_path]
 
-            # Write CSV
-            with open(csv_output_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv_module.DictWriter(f, fieldnames=output_fieldnames)
-                writer.writeheader()
-                writer.writerows(transformed_data)
-
-            self.transformed_files = [csv_output_path]
-            num_coords = len(transformed_data)
-            notify_info(f'Transformed {num_coords} points')
-
-        else:
-            # For surgical data, save as JSON
-            new_fieldnames = list(fieldnames)
-
-            # Add original coordinate and angle columns
-            for col in ['x_original', 'y_original', 'z_original', 'ring_original', 'arc_original']:
-                if col not in new_fieldnames:
-                    # Insert after the corresponding coordinate/angle column
-                    base_col = col.split('_')[0]
-                    if base_col in new_fieldnames:
-                        idx = new_fieldnames.index(base_col) + 1
-                        new_fieldnames.insert(idx, col)
-
-            # Add virtual entry point columns (from transformed surgical data)
-            for col in ['entry_x', 'entry_y', 'entry_z']:
-                if col not in new_fieldnames:
-                    new_fieldnames.append(col)
-
-            # Convert to JSON and save to session directory
-            json_data = convert_csv_to_json(transformed_data)
-            json_output_filename = f"{base_filename}_transformed.json"
-            json_output_path = get_session_file_path(json_output_filename, self.session_id)
-
-            with open(json_output_path, 'w') as f:
-                json.dump(json_data, f, indent=2)
-
-            # Store only JSON file
-            self.transformed_files = [json_output_path]
-
-            num_coords = sum(1 for row in transformed_data if 'x_original' in row)
-            notify_info(f'Transformed {num_coords} coordinate points')
+        num_coords = sum(1 for row in transformed_data if 'x_original' in row)
+        notify_info(f'Transformed {num_coords} coordinate points')
 
     def _update_output_display(self):
         """Update the output display."""

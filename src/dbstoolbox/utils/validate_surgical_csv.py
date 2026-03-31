@@ -1,4 +1,4 @@
-"""Utility for validating surgical data CSV files and ANTs point CSV files."""
+"""Utility for validating surgical data CSV files."""
 
 from pathlib import Path
 import csv
@@ -30,21 +30,17 @@ class SurgicalDataValidator:
     COORDINATE_COLUMNS = ['x', 'y', 'z']
     NUMERIC_COLUMNS = ['x', 'y', 'z', 'ring', 'arc', 'clinical_depth', 'research_depth', 'research_site']
 
-    # ANTs format: x, y, z, t (where t is typically 0 for point sets)
-    ANTS_REQUIRED_COLUMNS = ['x', 'y', 'z', 't']
-    ANTS_NUMERIC_COLUMNS = ['x', 'y', 'z', 't']
-
     @staticmethod
     def validate_file(file_path: Path) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """
-        Validate a surgical data CSV file or ANTs point CSV file.
+        Validate a surgical data CSV file.
 
         Args:
             file_path: Path to the CSV file
 
         Returns:
             Tuple of (is_valid, metadata, error_message)
-            - is_valid: True if file is a valid surgical data CSV or ANTs CSV
+            - is_valid: True if file is a valid surgical data CSV
             - metadata: Dict with num_records, columns, coordinate_range if valid
             - error_message: Error description if invalid
         """
@@ -61,14 +57,6 @@ class SurgicalDataValidator:
                 if not reader.fieldnames:
                     return False, None, "No columns found in CSV file"
 
-                # Check if it's ANTs format (x, y, z, t)
-                is_ants_format = set(SurgicalDataValidator.ANTS_REQUIRED_COLUMNS).issubset(set(reader.fieldnames))
-
-                if is_ants_format:
-                    # Validate as ANTs format
-                    return SurgicalDataValidator._validate_ants_format(reader, file_path)
-
-                # Otherwise, validate as surgical data format
                 missing_columns = set(SurgicalDataValidator.REQUIRED_COLUMNS) - set(reader.fieldnames)
                 if missing_columns:
                     return False, None, f"Missing required columns: {', '.join(missing_columns)}"
@@ -136,77 +124,6 @@ class SurgicalDataValidator:
             return False, None, f"CSV parsing error: {str(e)}"
         except Exception as e:
             return False, None, f"Validation error: {str(e)}"
-
-    @staticmethod
-    def _validate_ants_format(reader: csv.DictReader, file_path: Path) -> Tuple[bool, Optional[Dict], Optional[str]]:
-        """
-        Validate ANTs point format CSV file.
-
-        Args:
-            reader: CSV DictReader object
-            file_path: Path to the CSV file
-
-        Returns:
-            Tuple of (is_valid, metadata, error_message)
-        """
-        try:
-            # Read all rows
-            rows = list(reader)
-
-            if len(rows) == 0:
-                return False, None, "CSV file contains no data rows"
-
-            # Validate numeric columns
-            for idx, row in enumerate(rows, start=2):  # Start at 2 (1 for header)
-                for col in SurgicalDataValidator.ANTS_NUMERIC_COLUMNS:
-                    if col in row and row[col].strip():  # Only validate if not empty
-                        try:
-                            float(row[col])
-                        except ValueError:
-                            return False, None, f"Invalid numeric value in column '{col}' at row {idx}: '{row[col]}'"
-
-            # Calculate coordinate ranges
-            x_coords = []
-            y_coords = []
-            z_coords = []
-            t_vals = []
-
-            for row in rows:
-                try:
-                    if row.get('x', '').strip():
-                        x_coords.append(float(row['x']))
-                    if row.get('y', '').strip():
-                        y_coords.append(float(row['y']))
-                    if row.get('z', '').strip():
-                        z_coords.append(float(row['z']))
-                    if row.get('t', '').strip():
-                        t_vals.append(float(row['t']))
-                except ValueError:
-                    continue
-
-            # Extract metadata
-            metadata = {
-                'num_records': len(rows),
-                'columns': list(reader.fieldnames),
-                'num_columns': len(reader.fieldnames),
-                'is_ants_points': True,
-                'csv_format': 'ants_points'
-            }
-
-            if x_coords and y_coords and z_coords:
-                metadata['coordinate_ranges'] = {
-                    'x': {'min': min(x_coords), 'max': max(x_coords)},
-                    'y': {'min': min(y_coords), 'max': max(y_coords)},
-                    'z': {'min': min(z_coords), 'max': max(z_coords)}
-                }
-                if t_vals:
-                    metadata['coordinate_ranges']['t'] = {'min': min(t_vals), 'max': max(t_vals)}
-                metadata['num_coordinates'] = len(x_coords)
-
-            return True, metadata, None
-
-        except Exception as e:
-            return False, None, f"ANTs format validation error: {str(e)}"
 
 
 def validate_surgical_csv(file_path: Path) -> Tuple[bool, Optional[Dict], Optional[str]]:

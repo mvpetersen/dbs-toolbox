@@ -144,17 +144,6 @@ def apply_ants_transforms_to_points(
             which_to_invert[i] = False
 
     # Apply transforms (applied in REVERSE order - ANTs convention)
-    print("\n" + "="*60)
-    print("CALLING ants.apply_transforms_to_points()")
-    print("="*60)
-    print(f"Number of input points: {len(points_df)}")
-    print(f"Transform list (in order passed to ANTs):")
-    for idx, (tf, inv) in enumerate(zip(transforms_str, which_to_invert)):
-        print(f"  {idx+1}. {Path(tf).name}")
-        print(f"     - whichtoinvert[{idx}] = {inv}")
-    print("\nNOTE: ANTs applies transforms in REVERSE order!")
-    print("="*60 + "\n")
-
     transformed_df = ants.apply_transforms_to_points(
         dim=3,
         points=points_df,
@@ -273,6 +262,15 @@ def transform_pypacer_reconstruction(
             electrode["entry_position_original"] = electrode["entry_position"]
             electrode["entry_position"] = transformed_entry[0].tolist()
 
+        # Generate trajectory from polynomial if not already present
+        if "trajectory_coordinates" not in electrode and "polynomial" in electrode:
+            poly_coeffs = np.array(electrode["polynomial"])
+            t_vals = np.linspace(0, 1, 100)
+            electrode["trajectory_coordinates"] = [
+                [float(np.polyval(poly_coeffs[:, dim], t)) for dim in range(3)]
+                for t in t_vals
+            ]
+
         # Transform trajectory coordinates
         if "trajectory_coordinates" in electrode:
             trajectory = np.array(electrode["trajectory_coordinates"])
@@ -281,6 +279,35 @@ def transform_pypacer_reconstruction(
             )
             electrode["trajectory_coordinates_original"] = electrode["trajectory_coordinates"]
             electrode["trajectory_coordinates"] = transformed_trajectory.tolist()
+
+        # Transform orientation marker data (directional DBS electrodes)
+        orientation = electrode.get("orientation")
+        if orientation and orientation.get("has_markers") and "markers" in orientation:
+            for marker_key, marker in orientation["markers"].items():
+                # Transform marker position
+                if "position_xyz" in marker:
+                    pos = np.array(marker["position_xyz"]).reshape(1, 3)
+                    transformed_pos = apply_ants_transforms_to_points(
+                        pos, ants_transforms, use_inverse=ants_invert_flags
+                    )
+                    marker["position_xyz_original"] = marker["position_xyz"]
+                    marker["position_xyz"] = transformed_pos[0].tolist()
+
+                # Transform direction vector using two-point method
+                # (handles nonlinear ANTs transforms correctly)
+                if "direction_vector" in marker and "position_xyz_original" in marker:
+                    direction = np.array(marker["direction_vector"])
+                    origin = np.array(marker["position_xyz_original"])
+                    offset_point = (origin + direction).reshape(1, 3)
+                    transformed_offset = apply_ants_transforms_to_points(
+                        offset_point, ants_transforms, use_inverse=ants_invert_flags
+                    )
+                    new_direction = transformed_offset[0] - np.array(marker["position_xyz"])
+                    norm = np.linalg.norm(new_direction)
+                    if norm > 1e-10:
+                        new_direction = new_direction / norm
+                    marker["direction_vector_original"] = marker["direction_vector"]
+                    marker["direction_vector"] = new_direction.tolist()
 
     # Update metadata
     if "metadata" not in reconstruction_data:
@@ -821,120 +848,6 @@ def transform_surgical_csv(
             csv_data[valid_idx][f'mer_{track_type}_entry_z'] = f"{track_entries[local_idx, 2]:.2f}"
 
     return csv_data
-
-
-def transform_ants_points_csv(
-    csv_data: List[Dict],
-    transform_files: List[Path],
-    invert_flags: List[bool],
-    transform_types: List[str]
-) -> List[Dict]:
-    """
-    Transform coordinates in ANTs points CSV format (x, y, z, t).
-
-    Args:
-        csv_data: List of dictionaries (CSV rows) with x, y, z, t columns
-        transform_files: List of transform file paths
-        invert_flags: List of booleans for each transform
-        transform_types: List of transform types ('frame_registration', 'ants', etc.)
-
-    Returns:
-        Updated list of dictionaries with transformed coordinates
-    """
-    # Extract coordinates
-    points = []
-    t_values = []
-
-    for row in csv_data:
-        try:
-            x = float(row['x'])
-            y = float(row['y'])
-            z = float(row['z'])
-            t = float(row.get('t', 0))
-
-            points.append([x, y, z])
-            t_values.append(t)
-        except (ValueError, KeyError) as e:
-            # Skip rows with invalid data
-            points.append(None)
-            t_values.append(None)
-
-    # Filter valid points
-    valid_indices = [i for i, p in enumerate(points) if p is not None]
-    valid_points = np.array([points[i] for i in valid_indices])
-
-    if len(valid_points) == 0:
-        return csv_data
-
-    # Store original coordinates
-    original_points = valid_points.copy()
-    current_points = valid_points.copy()
-
-    # Separate frame registration and ANTs transforms
-    frame_transforms = []
-    frame_invert_flags = []
-    ants_transforms = []
-    ants_invert_flags = []
-
-    for transform_file, invert, transform_type in zip(transform_files, invert_flags, transform_types):
-        if transform_type == 'frame_registration':
-            frame_transforms.append(transform_file)
-            frame_invert_flags.append(invert)
-        else:
-            ants_transforms.append(transform_file)
-            ants_invert_flags.append(invert)
-
-    # First apply frame registration transforms
-    for transform_file, invert in zip(frame_transforms, frame_invert_flags):
-        # Load 4x4 matrix
-        with open(transform_file, 'r') as f:
-            matrix = np.array(json.load(f))
-
-        # Invert if requested
-        if invert:
-            matrix = np.linalg.inv(matrix)
-
-        # Transform points
-        current_points = apply_4x4_matrix_transform(current_points, matrix)
-
-    # Then apply ANTs transforms
-    if ants_transforms:
-        print("\n" + "="*60)
-        print("ANTs TRANSFORM APPLICATION ORDER")
-        print("="*60)
-        print(f"Passing {len(ants_transforms)} transforms to antsApplyTransformsToPoints:")
-        for idx, (tf, inv) in enumerate(zip(ants_transforms, ants_invert_flags)):
-            print(f"{idx+1}. {tf.name}")
-            print(f"   - use_inverse={inv}")
-        print("="*60 + "\n")
-
-        current_points = apply_ants_transforms_to_points(
-            current_points, ants_transforms, use_inverse=ants_invert_flags
-        )
-
-    # Update CSV data with transformed coordinates and add original columns
-    result_data = []
-    valid_idx = 0
-
-    for i, row in enumerate(csv_data):
-        new_row = row.copy()
-
-        if i in valid_indices:
-            # Add original coordinates
-            new_row['x_original'] = str(original_points[valid_idx, 0])
-            new_row['y_original'] = str(original_points[valid_idx, 1])
-            new_row['z_original'] = str(original_points[valid_idx, 2])
-
-            # Update with transformed coordinates
-            new_row['x'] = str(current_points[valid_idx, 0])
-            new_row['y'] = str(current_points[valid_idx, 1])
-            new_row['z'] = str(current_points[valid_idx, 2])
-
-            valid_idx += 1
-
-        result_data.append(new_row)
-
-    return result_data
 
 
 def convert_csv_to_json(csv_data: List[Dict]) -> Dict:

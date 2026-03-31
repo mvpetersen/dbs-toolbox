@@ -15,6 +15,10 @@ class ElectrodeReconstructionValidator:
         'electrodes': []
     }
 
+    OPTIONAL_FIELDS = {
+        'seed_points': ['voxel', 'world'],
+    }
+
     @staticmethod
     def validate_file(file_path: Path) -> Tuple[bool, Optional[Dict], Optional[str]]:
         """

@@ -6,7 +6,9 @@ import threading
 import queue
 from pathlib import Path
 from nicegui import ui
+from dbstoolbox import __version__
 from dbstoolbox.utils.temp_file_manager import save_uploaded_file
+from dbstoolbox.components.report_generation_dialog import show_report_generation_dialog
 
 # Global process tracker
 _running_processes = {
@@ -15,11 +17,12 @@ _running_processes = {
 }
 
 
-def home_page(tabs=None):
+def home_page(tabs=None, beta_mode=False):
     """Create the home page content.
 
     Args:
         tabs: The tabs element for navigation
+        beta_mode: Whether beta features are enabled
     """
 
     # Add CSS for terminal output styling
@@ -166,101 +169,6 @@ def home_page(tabs=None):
 
         term_dialog.open()
 
-    def auto_run_cli(tool_name: str, file_path: str, output_dir: str):
-        """Run CLI tool automatically (no GUI) and capture output to terminal."""
-        import os
-
-        # Check if already running
-        if _running_processes[tool_name]['active']:
-            ui.notify(f'{tool_name} is already running. Check the terminal icon to view output.', type='warning')
-            return
-
-        # Mark process as active
-        _running_processes[tool_name]['active'] = True
-        _running_processes[tool_name]['output'] = []
-        _running_processes[tool_name]['output_dir'] = output_dir
-
-        # Show terminal icon if available
-        if terminal_icons[tool_name]:
-            terminal_icons[tool_name].classes(remove='hidden')
-
-        # Build command for CLI (automatic processing)
-        if tool_name == 'PyPaCER':
-            cmd = [sys.executable, '-m', 'pypacer.cli.pypacer', file_path, '--output-dir', output_dir, '--html']
-        elif tool_name == 'Leksell':
-            # Leksell doesn't have CLI auto-run, fallback to GUI
-            cmd = [sys.executable, '-m', 'leksell_frame_registration.gui.matplotlib_gui', file_path, '--output-dir', output_dir]
-        else:
-            return
-
-        try:
-            # Launch process with output capture
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # Merge stderr into stdout
-                text=True,
-                bufsize=0,  # Unbuffered
-                universal_newlines=True,
-                env={**os.environ, 'PYTHONUNBUFFERED': '1'}
-            )
-
-            _running_processes[tool_name]['process'] = process
-
-            # Create queue for thread-safe output handling
-            output_queue = queue.Queue()
-
-            def read_output_thread():
-                """Read output in background thread."""
-                try:
-                    for line in iter(process.stdout.readline, ''):
-                        if line:
-                            output_queue.put(line)
-                    output_queue.put(None)  # Signal end
-                except Exception as e:
-                    output_queue.put(f"Error reading output: {str(e)}\n")
-                    output_queue.put(None)
-
-            # Start reader thread
-            reader_thread = threading.Thread(target=read_output_thread, daemon=True)
-            reader_thread.start()
-
-            # Poll queue and update UI
-            def check_output():
-                """Check for new output."""
-                try:
-                    while not output_queue.empty():
-                        line = output_queue.get_nowait()
-                        if line is None:  # End of stream
-                            _running_processes[tool_name]['active'] = False
-                            if terminal_icons[tool_name]:
-                                terminal_icons[tool_name].classes(add='hidden')
-                            ui.notify(f'{tool_name} auto-run completed. Check terminal for results.', type='positive')
-                            return False
-                        if line:
-                            # Store in process tracker
-                            _running_processes[tool_name]['output'].append(line.rstrip())
-                            # Keep last 1000 lines
-                            if len(_running_processes[tool_name]['output']) > 1000:
-                                _running_processes[tool_name]['output'] = _running_processes[tool_name]['output'][-1000:]
-
-                            # Print to console (terminal visibility)
-                            print(f"[{tool_name}] {line}", end='')
-                except queue.Empty:
-                    pass
-                return True  # Continue polling
-
-            # Start polling timer
-            ui.timer(0.1, check_output)
-
-            ui.notify(f'{tool_name} auto-run started (no GUI)', type='positive')
-        except Exception as e:
-            _running_processes[tool_name]['active'] = False
-            if terminal_icons[tool_name]:
-                terminal_icons[tool_name].classes(add='hidden')
-            ui.notify(f'Error launching CLI: {str(e)}', type='negative')
-            print(f"Error launching {tool_name} CLI: {str(e)}")
-
     def launch_gui_with_output(tool_name: str, file_path: str, output_dir: str):
         """Launch GUI and capture output to both terminal and UI."""
         import os
@@ -392,24 +300,15 @@ def home_page(tabs=None):
                     file_path = save_uploaded_file(content, filename)
                     uploaded_file_path = str(file_path)
 
-                    # Keep uploaded file in temp (will be cleared on reboot)
-                    # But set output directory to user's home directory with timestamp
-                    # Format: ~/dbstoolbox/YYYYMMDD_HHMMSS/pypacer or leksell-reg
-                    from datetime import datetime
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    tool_subdir = 'pypacer' if tool_name == 'PyPaCER' else 'leksell-reg'
-                    default_output_dir = Path.home() / 'dbstoolbox' / timestamp / tool_subdir
-                    temp_session_dir = str(default_output_dir)
+                    # Get the session directory (parent of the UUID subdir)
+                    # Path is like: /tmp/dbstoolbox_xyz/uuid/file.nii
+                    # We want: /tmp/dbstoolbox_xyz
+                    temp_session_dir = str(Path(file_path).parent.parent)
                     output_dir_input.value = temp_session_dir
 
                     file_status.text = f'File: {filename}'
                     file_status.classes('text-caption text-primary')
                     launch_button.enable()
-                    # Only enable auto run button if it exists (PyPaCER only)
-                    if tool_name == 'PyPaCER':
-                        auto_run_button.enable()
-                        # Change to red when enabled
-                        auto_run_button.classes(remove='text-grey', add='text-red')
                 except Exception as ex:
                     ui.notify(f'Error uploading file: {str(ex)}', type='negative')
 
@@ -422,19 +321,19 @@ def home_page(tabs=None):
             # Output directory
             ui.label('Output Directory').classes('text-subtitle2 mt-4 mb-2')
 
-            # Info message about default location
-            with ui.row().classes('w-full items-start gap-2 p-2 bg-blue-50 rounded border border-blue-200 mb-2'):
-                ui.icon('info', color='blue').classes('mt-0.5')
+            # Warning message
+            with ui.row().classes('w-full items-start gap-2 p-2 bg-orange-50 rounded border border-orange-200 mb-2'):
+                ui.icon('warning', color='orange').classes('mt-0.5')
                 with ui.column().classes('gap-1'):
-                    ui.label('Uploaded files stored in /tmp (cleared on reboot)').classes('text-caption text-blue-900 font-semibold')
-                    ui.label('Output results saved to ~/dbstoolbox/[timestamp]/pypacer or leksell-reg').classes('text-caption text-blue-800')
+                    ui.label('Default output is in /tmp and will be cleared on reboot').classes('text-caption text-orange-900 font-semibold')
+                    ui.label('Change the path or move your data immediately after the GUI saves it').classes('text-caption text-orange-800')
 
             # Create output directory input (will be populated when file is uploaded)
             output_dir_input = ui.input(
-                placeholder='Will be set when file is uploaded'
+                placeholder='Will be set to temp directory when file is uploaded'
             ).classes('w-full')
 
-            # Button handlers
+            # Launch button
             def launch_gui():
                 if not uploaded_file_path:
                     ui.notify('Please select a NIfTI file first', type='warning')
@@ -452,28 +351,7 @@ def home_page(tabs=None):
                 launch_gui_with_output(tool_name, uploaded_file_path, str(output_dir))
                 dialog.close()
 
-            def run_auto():
-                if not uploaded_file_path:
-                    ui.notify('Please select a NIfTI file first', type='warning')
-                    return
-
-                # Use output directory from input (or temp dir if not changed)
-                output_dir = Path(output_dir_input.value.strip()) if output_dir_input.value else Path(temp_session_dir)
-
-                try:
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                except Exception as e:
-                    ui.notify(f'Error creating output directory: {str(e)}', type='negative')
-                    return
-
-                auto_run_cli(tool_name, uploaded_file_path, str(output_dir))
-                dialog.close()
-
-            with ui.row().classes('w-full justify-end gap-2 mt-4'):
-                # Only show auto run button for PyPaCER
-                if tool_name == 'PyPaCER':
-                    auto_run_button = ui.button('Auto Run', icon='play_arrow', on_click=run_auto).props('outline').classes('text-grey')
-                    auto_run_button.disable()  # Only enabled after file upload
+            with ui.row().classes('w-full justify-end mt-4'):
                 launch_button = ui.button('Launch GUI', icon='open_in_new', on_click=launch_gui).props('color=primary')
                 launch_button.disable()  # Only enabled after file upload
 
@@ -484,27 +362,34 @@ def home_page(tabs=None):
         with ui.card().classes('w-full p-8 mb-8'):
             ui.label('Welcome to The DBS Toolbox').classes('text-h3 text-weight-bold mb-4')
             ui.label(
-                'A modern, unified interface for custom deep brain stimulation imaging tools. '
-                'This application provides easy access to PyPaCER for electrode reconstruction, '
-                'Leksell Frame Registration for handling stereotactic data, and various utility tools.'
+                'A modern, unified interface for deep brain stimulation imaging tools. '
+                'This application provides intuitive access to PyPaCER for electrode reconstruction, '
+                'Leksell Frame Registration for stereotactic procedures, and various utility tools.'
             ).classes('text-body1 text-grey-8')
 
-            # GitHub link
-            with ui.row().classes('absolute gap-2 mt-0 right-8 bottom-2 flex'):
+            with ui.row().classes('gap-2 mt-2 items-center'):
                 ui.icon('code', size='sm').classes('text-grey-6')
-                ui.link('View on GitHub', 'https://github.com/mvpetersen/dbs-toolbox', new_tab=True).classes('text-sm text-grey-7')
+                ui.link(f'The DBS Toolbox v{__version__}', 'https://github.com/mvpetersen/dbs-toolbox', new_tab=True).classes('text-sm text-grey-7')
 
         # Feature cards
         with ui.row().classes('w-full gap-4'):
-            # PyPaCER card - legacy GUI available
+            # PyPaCER card - legacy GUI always available, tab navigation only in beta mode
             with ui.card().classes('col p-6 relative').style('min-height: 260px'):
-                with ui.column().classes('items-center text-center gap-2'):
+                # Make card content clickable only in beta mode
+                card_classes = 'items-center text-center gap-2'
+                if beta_mode:
+                    card_classes += ' cursor-pointer'
+
+                with ui.column().classes(card_classes).on('click', lambda: tabs.set_value('pypacer') if (tabs and beta_mode) else None):
                     ui.icon('sensors', size='xl', color='primary')
                     ui.label('PyPaCER').classes('text-h6 mt-2')
                     ui.label(
                         'Automatic detection and reconstruction of DBS electrodes from post-operative CT imaging'
                     ).classes('text-body2 text-grey-7')
-                    ui.badge('Legacy GUI available', color='blue').classes('mt-2')
+
+                    # Show info badge in simplified mode
+                    if not beta_mode:
+                        ui.badge('Legacy GUI available', color='blue').classes('mt-2')
 
                     # GitHub link
                     with ui.row().classes('gap-2 mt-4 items-center').on('click.stop', lambda e: None):
@@ -516,7 +401,7 @@ def home_page(tabs=None):
                     # Terminal icon (hidden by default, shown when process is running)
                     pypacer_term_icon = ui.button(icon='terminal',
                              on_click=lambda: show_terminal_popup('PyPaCER')
-                            ).props('flat round dense color=orange').tooltip('View terminal output').classes('hidden')
+                            ).props('flat round dense color=primary').tooltip('View terminal output').classes('hidden')
                     terminal_icons['PyPaCER'] = pypacer_term_icon
 
                     # Legacy UI button
@@ -524,15 +409,23 @@ def home_page(tabs=None):
                              on_click=lambda: show_legacy_gui_dialog('PyPaCER')
                             ).props('flat round dense').tooltip('Open legacy GUI')
 
-            # Leksell card - legacy GUI available
+            # Leksell card - legacy GUI always available, tab navigation only in beta mode
             with ui.card().classes('col p-6 relative').style('min-height: 260px'):
-                with ui.column().classes('items-center text-center gap-2'):
+                # Make card content clickable only in beta mode
+                card_classes = 'items-center text-center gap-2'
+                if beta_mode:
+                    card_classes += ' cursor-pointer'
+
+                with ui.column().classes(card_classes).on('click', lambda: tabs.set_value('leksell') if (tabs and beta_mode) else None):
                     ui.icon('grid_on', size='xl', color='primary')
                     ui.label('Leksell Registration').classes('text-h6 mt-2')
                     ui.label(
-                        'Fiducial detection and frame registration for Leksell stereotactic data'
+                        'Fiducial detection and frame registration for Leksell stereotactic procedures'
                     ).classes('text-body2 text-grey-7')
-                    ui.badge('Legacy GUI available', color='blue').classes('mt-2')
+
+                    # Show info badge in simplified mode
+                    if not beta_mode:
+                        ui.badge('Legacy GUI available', color='blue').classes('mt-2')
 
                     # GitHub link
                     with ui.row().classes('gap-2 mt-4 items-center').on('click.stop', lambda e: None):
@@ -544,7 +437,7 @@ def home_page(tabs=None):
                     # Terminal icon (hidden by default, shown when process is running)
                     leksell_term_icon = ui.button(icon='terminal',
                              on_click=lambda: show_terminal_popup('Leksell')
-                            ).props('flat round dense color=orange').tooltip('View terminal output').classes('hidden')
+                            ).props('flat round dense color=primary').tooltip('View terminal output').classes('hidden')
                     terminal_icons['Leksell'] = leksell_term_icon
 
                     # Legacy UI button
@@ -558,9 +451,10 @@ def home_page(tabs=None):
                     ui.icon('handyman', size='xl', color='primary')
                     ui.label('Utility Tools').classes('text-h6 mt-2')
                     ui.label(
-                        'Coordinate transformation and data visualization for DBS workflows'
+                        'Coordinate transformation, data visualization, and testing utilities for DBS workflows'
                     ).classes('text-body2 text-grey-7')
                     # Shortcut buttons
                     with ui.row().classes('gap-2 mt-4'):
                         ui.button('Transform', icon='grid_off', on_click=lambda: open_tab('transform')).props('outline color=primary')
                         ui.button('Visualize', icon='visibility', on_click=lambda: open_tab('visualize')).props('outline color=primary')
+                        ui.button('Generate Reports', icon='assessment', on_click=show_report_generation_dialog).props('outline color=primary')
